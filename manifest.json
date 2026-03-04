@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Quick PiP",
+  "version": "1.0.0",
+  "description": "Ative ou desative Picture-in-Picture no vídeo principal da aba atual com um clique ou Alt+P.",
+  "icons": {
+    "16":  "icons/icon16.png",
+    "32":  "icons/icon32.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "32":  "icons/icon32.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Quick PiP — Ativar/Desativar Picture-in-Picture"
+  },
+  "commands": {
+    "toggle-pip": {
+      "suggested_key": {
+        "default": "Alt+P",
+        "mac": "Alt+P"
+      },
+      "description": "Ativar/Desativar Picture-in-Picture"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quick PiP</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <!-- Header -->
+      <header class="header">
+        <img src="icons/icon48.png" alt="Quick PiP" class="logo" />
+        <div class="header-text">
+          <h1 class="title">Quick PiP</h1>
+          <p class="subtitle">Picture-in-Picture</p>
+        </div>
+      </header>
+
+      <!-- Main action -->
+      <main class="main">
+        <button id="btn-toggle" class="btn-pip" aria-label="Ativar ou desativar Picture-in-Picture">
+          <span class="btn-icon" aria-hidden="true">⊡</span>
+          <span class="btn-label" id="btn-label">Ativar / Desativar PiP</span>
+        </button>
+
+        <!-- Status area -->
+        <div id="status-area" class="status-area" role="status" aria-live="polite" aria-atomic="true">
+          <span id="status-icon" class="status-icon" aria-hidden="true"></span>
+          <span id="status-msg" class="status-msg">Clique no botão ou use o atalho.</span>
+        </div>
+      </main>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p class="shortcut-hint">Atalho de teclado: <kbd>Alt</kbd>+<kbd>P</kbd></p>
+      </footer>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
