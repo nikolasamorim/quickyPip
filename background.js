@@ -4,39 +4,40 @@
  * Responsável por:
  * - Escutar o atalho de teclado Alt+P (comando "toggle-pip")
  * - Executar a ação de toggle PiP na aba ativa via chrome.scripting
+ * - Gerenciar o estado do Auto PiP (armar/desarmar, injetar watcher)
  */
 
+// ─── Função injetada na página para toggle PiP ─────────────────────────────
 /**
- * Função injetada na página para localizar e alternar PiP.
- * Retorna um objeto { ok, status, reason }.
+ * Injetada via executeScript. Retorna Promise<{ ok, status, reason, wasActive }>.
+ * wasActive = true  → PiP estava ativo antes (ação foi desativar)
+ * wasActive = false → PiP estava inativo antes (ação foi ativar)
  */
 function pipToggleScript() {
   try {
-    // Se já há um elemento em PiP, sair do modo PiP
     if (document.pictureInPictureElement) {
-      return document.exitPictureInPicture().then(() => ({
-        ok: true,
-        status: "desativado",
-        reason: "Picture-in-Picture desativado com sucesso.",
-      })).catch((err) => ({
-        ok: false,
-        status: "erro",
-        reason: "Erro ao sair do PiP: " + err.message,
-      }));
+      return document.exitPictureInPicture()
+        .then(() => ({
+          ok: true, status: "desativado",
+          reason: "Picture-in-Picture desativado com sucesso.",
+          wasActive: true,
+        }))
+        .catch((err) => ({
+          ok: false, status: "erro",
+          reason: "Erro ao sair do PiP: " + err.message,
+          wasActive: true,
+        }));
     }
 
-    // Coletar todos os vídeos da página
     const allVideos = Array.from(document.querySelectorAll("video"));
-
     if (allVideos.length === 0) {
       return Promise.resolve({
-        ok: false,
-        status: "nenhum",
+        ok: false, status: "nenhum",
         reason: "Nenhum vídeo detectado na página.",
+        wasActive: false,
       });
     }
 
-    // Filtrar vídeos visíveis com tamanho mínimo
     const visibleVideos = allVideos.filter((v) => {
       const style = window.getComputedStyle(v);
       if (style.display === "none") return false;
@@ -50,13 +51,12 @@ function pipToggleScript() {
 
     if (candidates.length === 0) {
       return Promise.resolve({
-        ok: false,
-        status: "nenhum",
+        ok: false, status: "nenhum",
         reason: "Nenhum vídeo visível encontrado na página.",
+        wasActive: false,
       });
     }
 
-    // Escolher o maior vídeo pela área do bounding rect
     const bestVideo = candidates.reduce((best, v) => {
       const rect = v.getBoundingClientRect();
       const area = rect.width * rect.height;
@@ -65,70 +65,113 @@ function pipToggleScript() {
       return area > bestArea ? v : best;
     });
 
-    // Verificar suporte a PiP
     if (!document.pictureInPictureEnabled) {
       return Promise.resolve({
-        ok: false,
-        status: "bloqueado",
-        reason:
-          "PiP não está disponível neste navegador ou está desabilitado globalmente.",
+        ok: false, status: "bloqueado",
+        reason: "PiP não está disponível neste navegador ou está desabilitado globalmente.",
+        wasActive: false,
       });
     }
 
-    // Se o player bloqueou PiP via atributo, remove antes de ativar
     if (bestVideo.disablePictureInPicture) {
       bestVideo.disablePictureInPicture = false;
       bestVideo.removeAttribute("disablepictureinpicture");
     }
 
-    // Solicitar PiP
-    return bestVideo
-      .requestPictureInPicture()
+    return bestVideo.requestPictureInPicture()
       .then(() => ({
-        ok: true,
-        status: "ativado",
+        ok: true, status: "ativado",
         reason: "Picture-in-Picture ativado com sucesso.",
+        wasActive: false,
       }))
       .catch((err) => ({
-        ok: false,
-        status: "erro",
-        reason:
-          "PiP não está disponível neste player/página (pode estar bloqueado). Detalhe: " +
-          err.message,
+        ok: false, status: "erro",
+        reason: "PiP não está disponível neste player/página (pode estar bloqueado). Detalhe: " + err.message,
+        wasActive: false,
       }));
   } catch (err) {
     return Promise.resolve({
-      ok: false,
-      status: "erro",
+      ok: false, status: "erro",
       reason: "Erro inesperado: " + err.message,
+      wasActive: false,
     });
   }
 }
 
+// ─── Helpers de scripting ──────────────────────────────────────────────────
+
 /**
- * Executa o toggle PiP na aba ativa e retorna o resultado.
+ * Retorna a aba ativa ou null se não for possível.
+ */
+async function getActiveTab() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || tabs.length === 0) return null;
+    const tab = tabs[0];
+    if (
+      !tab.url ||
+      tab.url.startsWith("chrome://") ||
+      tab.url.startsWith("about:") ||
+      tab.url.startsWith("chrome-extension://")
+    ) return null;
+    return tab;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Injeta o content.js na aba (idempotente — o script verifica window.__quickPipWatcherActive).
+ */
+async function ensureContentScriptInjected(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    });
+  } catch (_) {
+    // Pode falhar se o script já estiver registrado; ignorar.
+  }
+}
+
+/**
+ * Envia mensagem ao content script da aba.
+ */
+async function sendToTab(tabId, msg) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, msg);
+  } catch {
+    return null;
+  }
+}
+
+// ─── Armar Auto PiP na aba ────────────────────────────────────────────────
+
+async function armAutoPip(tab) {
+  await chrome.storage.local.set({ autoPipArmed: true });
+  await ensureContentScriptInjected(tab.id);
+  await sendToTab(tab.id, { type: "START_AUTO_PIP" });
+}
+
+async function disarmAutoPip(tab) {
+  await chrome.storage.local.set({ autoPipArmed: false });
+  if (tab) {
+    await sendToTab(tab.id, { type: "STOP_AUTO_PIP" });
+  }
+}
+
+// ─── Toggle PiP principal ─────────────────────────────────────────────────
+
+/**
+ * Executa o toggle PiP na aba ativa e lida com a lógica de Auto PiP.
  * @returns {Promise<{ok: boolean, status: string, reason: string}>}
  */
 async function togglePiPOnActiveTab() {
-  let tabs;
-  try {
-    tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  } catch (err) {
-    return { ok: false, status: "erro", reason: "Não foi possível acessar a aba ativa." };
-  }
-
-  if (!tabs || tabs.length === 0) {
-    return { ok: false, status: "erro", reason: "Nenhuma aba ativa encontrada." };
-  }
-
-  const tab = tabs[0];
-
-  // Páginas internas do Chrome (chrome://, about:, etc.) não suportam scripting
-  if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("about:") || tab.url.startsWith("chrome-extension://")) {
+  const tab = await getActiveTab();
+  if (!tab) {
     return {
-      ok: false,
-      status: "erro",
-      reason: "Não é possível usar PiP em páginas internas do navegador.",
+      ok: false, status: "erro",
+      reason: "Não foi possível acessar a aba ativa ou ela é uma página interna.",
     };
   }
 
@@ -140,8 +183,7 @@ async function togglePiPOnActiveTab() {
     });
   } catch (err) {
     return {
-      ok: false,
-      status: "erro",
+      ok: false, status: "erro",
       reason: "Não foi possível injetar o script na página. Detalhe: " + err.message,
     };
   }
@@ -150,13 +192,53 @@ async function togglePiPOnActiveTab() {
     return { ok: false, status: "erro", reason: "Sem resposta do script injetado." };
   }
 
-  return results[0].result;
+  const result = results[0].result;
+
+  // ─── Integração com Auto PiP ────────────────────────────────────────────
+  const { autoPipEnabled } = await chrome.storage.local.get("autoPipEnabled");
+
+  if (autoPipEnabled) {
+    if (result.ok && result.status === "ativado") {
+      // Usuário ativou PiP manualmente com Auto PiP ligado → armar
+      await armAutoPip(tab);
+    } else if (result.wasActive && result.status === "desativado") {
+      // Usuário desativou PiP manualmente → desarmar
+      await disarmAutoPip(tab);
+    }
+  }
+
+  return result;
 }
 
-// ─── Comando de teclado Alt+P ─────────────────────────────────────────────────
+// ─── Comando de teclado Alt+P ──────────────────────────────────────────────
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "toggle-pip") return;
   await togglePiPOnActiveTab();
-  // O resultado do atalho de teclado não é surfaceado em lugar nenhum
-  // (o popup pode estar fechado). Silencia silenciosamente em caso de sucesso.
+});
+
+// ─── Mensagens do popup ────────────────────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "TOGGLE_PIP") {
+    togglePiPOnActiveTab().then(sendResponse);
+    return true; // async
+  }
+
+  if (msg.type === "DISABLE_AUTO_PIP") {
+    // Popup desligou o toggle → desarmar a aba ativa
+    getActiveTab().then((tab) => disarmAutoPip(tab).then(() => sendResponse({ ok: true })));
+    return true;
+  }
+
+  if (msg.type === "GET_AUTO_PIP_STATUS") {
+    getActiveTab().then(async (tab) => {
+      let watcherStatus = null;
+      if (tab) {
+        await ensureContentScriptInjected(tab.id).catch(() => { });
+        watcherStatus = await sendToTab(tab.id, { type: "STATUS" });
+      }
+      const stored = await chrome.storage.local.get(["autoPipEnabled", "autoPipArmed"]);
+      sendResponse({ ...stored, watcherStatus });
+    });
+    return true;
+  }
 });

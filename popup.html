@@ -1,41 +1,69 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quick PiP</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <div class="container">
-      <!-- Header -->
-      <header class="header">
-        <img src="icons/icon48.png" alt="Quick PiP" class="logo" />
-        <div class="header-text">
-          <h1 class="title">Quick PiP</h1>
-          <p class="subtitle">Picture-in-Picture</p>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quick PiP</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <img src="icons/icon48.png" alt="Quick PiP" class="logo" />
+      <div class="header-text">
+        <h1 class="title">Quick PiP</h1>
+        <p class="subtitle">Picture-in-Picture</p>
+      </div>
+    </header>
+
+    <!-- Main action -->
+    <main class="main">
+      <button id="btn-toggle" class="btn-pip" aria-label="Ativar ou desativar Picture-in-Picture">
+        <span class="btn-icon" aria-hidden="true">⊡</span>
+        <span class="btn-label" id="btn-label">Ativar / Desativar PiP</span>
+      </button>
+
+      <!-- Status area -->
+      <div id="status-area" class="status-area" role="status" aria-live="polite" aria-atomic="true">
+        <span id="status-icon" class="status-icon" aria-hidden="true"></span>
+        <span id="status-msg" class="status-msg">Clique no botão ou use o atalho.</span>
+      </div>
+
+      <!-- Auto PiP section -->
+      <div class="auto-pip-section">
+        <div class="auto-pip-header">
+          <div class="auto-pip-label-group">
+            <span class="auto-pip-title">Auto PiP</span>
+            <span class="auto-pip-desc">Re-ativa PiP automaticamente</span>
+          </div>
+          <label class="toggle-switch" for="auto-pip-toggle" aria-label="Ativar ou desativar Auto PiP">
+            <input type="checkbox" id="auto-pip-toggle" role="switch" />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
         </div>
-      </header>
 
-      <!-- Main action -->
-      <main class="main">
-        <button id="btn-toggle" class="btn-pip" aria-label="Ativar ou desativar Picture-in-Picture">
-          <span class="btn-icon" aria-hidden="true">⊡</span>
-          <span class="btn-label" id="btn-label">Ativar / Desativar PiP</span>
-        </button>
-
-        <!-- Status area -->
-        <div id="status-area" class="status-area" role="status" aria-live="polite" aria-atomic="true">
-          <span id="status-icon" class="status-icon" aria-hidden="true"></span>
-          <span id="status-msg" class="status-msg">Clique no botão ou use o atalho.</span>
+        <!-- Auto PiP status badges -->
+        <div id="auto-pip-status" class="auto-pip-status hidden">
+          <div class="badge-row">
+            <span class="badge badge--armed" id="badge-armed">● Armado</span>
+            <span class="badge badge--watching" id="badge-watching">👁 Monitorando</span>
+          </div>
+          <div id="auto-pip-last-status" class="auto-pip-last-status"></div>
         </div>
-      </main>
+      </div>
+    </main>
 
-      <!-- Footer -->
-      <footer class="footer">
-        <p class="shortcut-hint">Atalho de teclado: <kbd>Alt</kbd>+<kbd>P</kbd></p>
-      </footer>
-    </div>
-    <script src="popup.js"></script>
-  </body>
+    <!-- Footer -->
+    <footer class="footer">
+      <p class="shortcut-hint">Atalho de teclado: <kbd>Alt</kbd>+<kbd>P</kbd></p>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+
 </html>
