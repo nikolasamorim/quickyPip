@@ -1,69 +1,145 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quick PiP</title>
+  <title>QuickyPip</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="popup.css" />
 </head>
-
 <body>
-  <div class="container">
-    <!-- Header -->
-    <header class="header">
-      <img src="icons/icon48.png" alt="Quick PiP" class="logo" />
-      <div class="header-text">
-        <h1 class="title">Quick PiP</h1>
-        <p class="subtitle">Picture-in-Picture</p>
-      </div>
-    </header>
+  <!-- Header -->
+  <header class="header">
+    <div class="logo-mark" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="3" width="16" height="11" rx="2" stroke="white" stroke-width="1.5"/>
+        <rect x="8" y="7" width="8" height="6" rx="1" fill="white"/>
+      </svg>
+    </div>
+    <span class="header-title">QuickyPip</span>
+    <span class="header-version">v 1.2</span>
+  </header>
 
-    <!-- Main action -->
-    <main class="main">
-      <button id="btn-toggle" class="btn-pip" aria-label="Ativar ou desativar Picture-in-Picture">
-        <span class="btn-icon" aria-hidden="true">⊡</span>
-        <span class="btn-label" id="btn-label">Ativar / Desativar PiP</span>
+  <!-- Body -->
+  <main class="body">
+
+    <!-- 1. Status pill -->
+    <div class="status-pill" id="status-pill">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-text" id="status-text">Nenhum vídeo em PiP</span>
+    </div>
+
+    <!-- 2. Miniplayer (hidden by default) -->
+    <div class="miniplayer hidden" id="miniplayer">
+      <div class="mini-thumb" id="mini-thumb">
+        <span class="mini-origin" id="mini-origin">Aba · —</span>
+        <span class="mini-live hidden" id="mini-live">● ao vivo</span>
+        <button class="mini-playpause" id="mini-playpause" aria-label="Play/Pause">
+          <svg id="mini-play-icon" width="20" height="20" viewBox="0 0 20 20" fill="white" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 4l11 6-11 6V4z"/>
+          </svg>
+          <svg id="mini-pause-icon" width="20" height="20" viewBox="0 0 20 20" fill="white" xmlns="http://www.w3.org/2000/svg" class="hidden">
+            <rect x="4" y="3" width="4" height="14" rx="1"/>
+            <rect x="12" y="3" width="4" height="14" rx="1"/>
+          </svg>
+        </button>
+        <span class="mini-time" id="mini-time">0:00 / 0:00</span>
+        <div class="mini-progress-wrap" id="mini-progress-wrap">
+          <div class="mini-progress-bar" id="mini-progress-bar"></div>
+        </div>
+      </div>
+
+      <div class="mini-controls">
+        <div class="mini-ctrl-main">
+          <button class="ctrl-btn" id="ctrl-mute" aria-label="Mudo">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 6h3l4-4v12l-4-4H2V6zm11-1.5a5 5 0 010 7M11 6a3 3 0 010 4"/></svg>
+          </button>
+          <button class="ctrl-btn ctrl-seek" id="ctrl-back" aria-label="Voltar 10s">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a6 6 0 100 12A6 6 0 008 2zM5 8l4-3v6L5 8z"/></svg>
+            <span class="seek-label">10</span>
+          </button>
+          <button class="ctrl-btn ctrl-playpause-main" id="ctrl-play" aria-label="Play/Pause">
+            <svg id="ctrl-play-icon" width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M5 3l11 6-11 6V3z"/></svg>
+            <svg id="ctrl-pause-icon" width="18" height="18" viewBox="0 0 18 18" fill="currentColor" class="hidden"><rect x="3" y="2" width="4" height="14" rx="1"/><rect x="11" y="2" width="4" height="14" rx="1"/></svg>
+          </button>
+          <button class="ctrl-btn ctrl-seek" id="ctrl-fwd" aria-label="Avançar 10s">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a6 6 0 100 12A6 6 0 008 2zm3 6l-4 3V5l4 3z"/></svg>
+            <span class="seek-label">10</span>
+          </button>
+          <button class="ctrl-btn" id="ctrl-goto" aria-label="Ir para aba">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4v1.5H4.5v7h7V10H13v4H3V3zm6 0h4v4h-1.5V5.06l-5.47 5.47-1.06-1.06L10.94 4H9V3z"/></svg>
+          </button>
+        </div>
+        <div class="mini-ctrl-secondary">
+          <input type="range" class="volume-slider" id="volume-slider" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
+          <div class="speed-control">
+            <button class="speed-btn" id="speed-down" aria-label="Diminuir velocidade">−</button>
+            <span class="speed-display" id="speed-display">1×</span>
+            <button class="speed-btn" id="speed-up" aria-label="Aumentar velocidade">+</button>
+          </div>
+        </div>
+        <div class="mini-ctrl-skip">
+          <button class="btn-skip-intro hidden" id="btn-skip-intro" aria-label="Pular abertura">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 2l6 4-6 4V2zm7 0h1.5v8H9V2z"/></svg>
+            Pular abertura
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. PiP action buttons -->
+    <div class="pip-btns">
+      <button class="btn btn-activate" id="btn-activate" aria-label="Ativar PiP">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="0" y="2" width="14" height="9" rx="1.5" opacity=".4"/><rect x="6" y="5" width="8" height="5" rx="1"/></svg>
+        Ativar PiP
       </button>
+      <button class="btn btn-deactivate" id="btn-deactivate" aria-label="Desativar PiP">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="0" y="2" width="14" height="9" rx="1.5"/><line x1="2" y1="2" x2="12" y2="11" stroke="white" stroke-width="1.5"/></svg>
+        Desativar PiP
+      </button>
+    </div>
 
-      <!-- Status area -->
-      <div id="status-area" class="status-area" role="status" aria-live="polite" aria-atomic="true">
-        <span id="status-icon" class="status-icon" aria-hidden="true"></span>
-        <span id="status-msg" class="status-msg">Clique no botão ou use o atalho.</span>
-      </div>
+    <!-- 4. Section divider -->
+    <div class="section-divider">
+      <span class="divider-line"></span>
+      <span class="divider-label">automação</span>
+      <span class="divider-line"></span>
+    </div>
 
-      <!-- Auto PiP section -->
-      <div class="auto-pip-section">
-        <div class="auto-pip-header">
-          <div class="auto-pip-label-group">
-            <span class="auto-pip-title">Auto PiP</span>
-            <span class="auto-pip-desc">Re-ativa PiP automaticamente</span>
-          </div>
-          <label class="toggle-switch" for="auto-pip-toggle" aria-label="Ativar ou desativar Auto PiP">
-            <input type="checkbox" id="auto-pip-toggle" role="switch" />
-            <span class="toggle-track">
-              <span class="toggle-thumb"></span>
-            </span>
-          </label>
+    <!-- 5. Auto PiP card -->
+    <div class="autopip-card" id="autopip-card">
+      <div class="autopip-main-row">
+        <div class="autopip-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a5 5 0 11-.01 10.01A5 5 0 018 3zm-.75 2v4l3.5 2-.5.87-4-2.37V5h1z"/></svg>
         </div>
-
-        <!-- Auto PiP status badges -->
-        <div id="auto-pip-status" class="auto-pip-status hidden">
-          <div class="badge-row">
-            <span class="badge badge--armed" id="badge-armed">● Armado</span>
-            <span class="badge badge--watching" id="badge-watching">👁 Monitorando</span>
-          </div>
-          <div id="auto-pip-last-status" class="auto-pip-last-status"></div>
+        <div class="autopip-text">
+          <span class="autopip-title">Auto PiP</span>
+          <span class="autopip-desc">Reativa ao trocar de episódio</span>
         </div>
+        <label class="toggle-switch" for="autopip-toggle" aria-label="Ativar Auto PiP">
+          <input type="checkbox" id="autopip-toggle" role="switch" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
       </div>
-    </main>
+      <div class="autopip-state-line" id="autopip-state-line">
+        <span class="autopip-state-dot hidden" id="autopip-state-dot"></span>
+        <span id="autopip-state-text">ative o PiP primeiro</span>
+      </div>
+    </div>
 
-    <!-- Footer -->
-    <footer class="footer">
-      <p class="shortcut-hint">Atalho de teclado: <kbd>Alt</kbd>+<kbd>P</kbd></p>
-    </footer>
-  </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <span class="footer-label">atalho rápido</span>
+    <div class="footer-keys">
+      <kbd>Alt</kbd>
+      <kbd>P</kbd>
+    </div>
+  </footer>
+
   <script src="popup.js"></script>
 </body>
-
 </html>

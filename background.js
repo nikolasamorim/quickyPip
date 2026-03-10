@@ -1,244 +1,410 @@
 /**
- * Quick PiP — background.js (Service Worker, Manifest V3)
- *
- * Responsável por:
- * - Escutar o atalho de teclado Alt+P (comando "toggle-pip")
- * - Executar a ação de toggle PiP na aba ativa via chrome.scripting
- * - Gerenciar o estado do Auto PiP (armar/desarmar, injetar watcher)
+ * QuickyPip — background.js (Service Worker, Manifest V3)
  */
 
-// ─── Função injetada na página para toggle PiP ─────────────────────────────
-/**
- * Injetada via executeScript. Retorna Promise<{ ok, status, reason, wasActive }>.
- * wasActive = true  → PiP estava ativo antes (ação foi desativar)
- * wasActive = false → PiP estava inativo antes (ação foi ativar)
- */
-function pipToggleScript() {
-  try {
-    if (document.pictureInPictureElement) {
-      return document.exitPictureInPicture()
-        .then(() => ({
-          ok: true, status: "desativado",
-          reason: "Picture-in-Picture desativado com sucesso.",
-          wasActive: true,
-        }))
-        .catch((err) => ({
-          ok: false, status: "erro",
-          reason: "Erro ao sair do PiP: " + err.message,
-          wasActive: true,
-        }));
-    }
+// ─── findBestVideo inline (used in injected funcs) ────────────────────────────
+// NOTE: This function is duplicated into every injected script since MV3 service
+// workers cannot share modules with content scripts at runtime.
 
-    const allVideos = Array.from(document.querySelectorAll("video"));
-    if (allVideos.length === 0) {
-      return Promise.resolve({
-        ok: false, status: "nenhum",
-        reason: "Nenhum vídeo detectado na página.",
-        wasActive: false,
-      });
-    }
-
-    const visibleVideos = allVideos.filter((v) => {
-      const style = window.getComputedStyle(v);
-      if (style.display === "none") return false;
-      if (style.visibility === "hidden") return false;
-      if (parseFloat(style.opacity) === 0) return false;
-      const rect = v.getBoundingClientRect();
-      return rect.width > 200 && rect.height > 200;
-    });
-
-    const candidates = visibleVideos.length > 0 ? visibleVideos : allVideos;
-
-    if (candidates.length === 0) {
-      return Promise.resolve({
-        ok: false, status: "nenhum",
-        reason: "Nenhum vídeo visível encontrado na página.",
-        wasActive: false,
-      });
-    }
-
-    const bestVideo = candidates.reduce((best, v) => {
-      const rect = v.getBoundingClientRect();
-      const area = rect.width * rect.height;
-      const bestRect = best.getBoundingClientRect();
-      const bestArea = bestRect.width * bestRect.height;
-      return area > bestArea ? v : best;
-    });
-
-    if (!document.pictureInPictureEnabled) {
-      return Promise.resolve({
-        ok: false, status: "bloqueado",
-        reason: "PiP não está disponível neste navegador ou está desabilitado globalmente.",
-        wasActive: false,
-      });
-    }
-
-    if (bestVideo.disablePictureInPicture) {
-      bestVideo.disablePictureInPicture = false;
-      bestVideo.removeAttribute("disablepictureinpicture");
-    }
-
-    return bestVideo.requestPictureInPicture()
-      .then(() => ({
-        ok: true, status: "ativado",
-        reason: "Picture-in-Picture ativado com sucesso.",
-        wasActive: false,
-      }))
-      .catch((err) => ({
-        ok: false, status: "erro",
-        reason: "PiP não está disponível neste player/página (pode estar bloqueado). Detalhe: " + err.message,
-        wasActive: false,
-      }));
-  } catch (err) {
-    return Promise.resolve({
-      ok: false, status: "erro",
-      reason: "Erro inesperado: " + err.message,
-      wasActive: false,
-    });
-  }
+function _findBestVideoSrc() {
+  // Returned as string to be eval'd — not used directly.
 }
 
-// ─── Helpers de scripting ──────────────────────────────────────────────────
+// ─── executePipToggle ─────────────────────────────────────────────────────────
 
-/**
- * Retorna a aba ativa ou null se não for possível.
- */
-async function getActiveTab() {
+async function executePipToggle(tab) {
+  if (!tab?.id) return;
+  const tabId = tab.id;
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs || tabs.length === 0) return null;
-    const tab = tabs[0];
-    if (
-      !tab.url ||
-      tab.url.startsWith("chrome://") ||
-      tab.url.startsWith("about:") ||
-      tab.url.startsWith("chrome-extension://")
-    ) return null;
-    return tab;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Injeta o content.js na aba (idempotente — o script verifica window.__quickPipWatcherActive).
- */
-async function ensureContentScriptInjected(tabId) {
-  try {
-    await chrome.scripting.executeScript({
+    const results = await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"],
+      func: function () {
+        function findBestVideo() {
+          const all = Array.from(document.querySelectorAll('video'));
+          if (!all.length) return null;
+          const visible = all.filter(v => {
+            const s = window.getComputedStyle(v);
+            if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+            const r = v.getBoundingClientRect();
+            return r.width > 100 && r.height > 100;
+          });
+          const pool = visible.length ? visible : all;
+          const scored = pool.map(v => {
+            const r = v.getBoundingClientRect();
+            let score = r.width * r.height;
+            if (v.duration > 30 && v.duration !== Infinity) score += 1e7;
+            if (!v.defaultMuted) score += 1e6;
+            if (!v.paused) score += 1e5;
+            return { v, score };
+          });
+          scored.sort((a, b) => b.score - a.score);
+          return scored[0].v;
+        }
+        if (document.pictureInPictureElement) {
+          return document.exitPictureInPicture()
+            .then(() => ({ ok: true, action: 'deactivated' }))
+            .catch(e => ({ ok: false, action: 'deactivated', error: e.message }));
+        }
+        const video = findBestVideo();
+        if (!video) return Promise.resolve({ ok: false, action: 'none', error: 'Nenhum vídeo encontrado.' });
+        video.removeAttribute('disablepictureinpicture');
+        try { video.disablePictureInPicture = false; } catch (_) {}
+        return video.requestPictureInPicture()
+          .then(() => ({ ok: true, action: 'activated' }))
+          .catch(e => ({ ok: false, action: 'activated', error: e.message }));
+      },
     });
-  } catch (_) {
-    // Pode falhar se o script já estiver registrado; ignorar.
+
+    const res = results?.[0]?.result;
+    if (!res) { await chrome.storage.local.set({ lastError: 'Sem resposta do script.' }); return; }
+
+    if (res.action === 'activated' && res.ok) {
+      await chrome.storage.local.set({ pipActive: true, pipTabId: tabId, lastError: null });
+    } else if (res.action === 'deactivated' && res.ok) {
+      await chrome.storage.local.set({ pipActive: false, pipTabId: null, lastError: null });
+    } else if (!res.ok) {
+      await chrome.storage.local.set({ lastError: res.error || 'Erro desconhecido.' });
+    }
+  } catch (e) {
+    await chrome.storage.local.set({ lastError: e.message });
   }
 }
 
-/**
- * Envia mensagem ao content script da aba.
- */
-async function sendToTab(tabId, msg) {
+// ─── Auto PiP watcher injection ──────────────────────────────────────────────
+
+async function injectAutoPipWatcher(tabId) {
   try {
-    return await chrome.tabs.sendMessage(tabId, msg);
-  } catch {
-    return null;
+    await chrome.scripting.executeScript({ target: { tabId }, func: autoPipWatcherScript });
+  } catch (e) {
+    await chrome.storage.local.set({ lastError: 'AutoPip inject: ' + e.message });
   }
 }
 
-// ─── Armar Auto PiP na aba ────────────────────────────────────────────────
+function autoPipWatcherScript() {
+  if (window.__quickyPipWatcher) return;
+  window.__quickyPipWatcher = true;
 
-async function armAutoPip(tab) {
-  await chrome.storage.local.set({ autoPipArmed: true });
-  await ensureContentScriptInjected(tab.id);
-  await sendToTab(tab.id, { type: "START_AUTO_PIP" });
-}
-
-async function disarmAutoPip(tab) {
-  await chrome.storage.local.set({ autoPipArmed: false });
-  if (tab) {
-    await sendToTab(tab.id, { type: "STOP_AUTO_PIP" });
-  }
-}
-
-// ─── Toggle PiP principal ─────────────────────────────────────────────────
-
-/**
- * Executa o toggle PiP na aba ativa e lida com a lógica de Auto PiP.
- * @returns {Promise<{ok: boolean, status: string, reason: string}>}
- */
-async function togglePiPOnActiveTab() {
-  const tab = await getActiveTab();
-  if (!tab) {
-    return {
-      ok: false, status: "erro",
-      reason: "Não foi possível acessar a aba ativa ou ela é uma página interna.",
-    };
-  }
-
-  let results;
-  try {
-    results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: pipToggleScript,
+  function findBestVideo() {
+    const all = Array.from(document.querySelectorAll('video'));
+    if (!all.length) return null;
+    const visible = all.filter(v => {
+      const s = window.getComputedStyle(v);
+      if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+      const r = v.getBoundingClientRect();
+      return r.width > 100 && r.height > 100;
     });
-  } catch (err) {
-    return {
-      ok: false, status: "erro",
-      reason: "Não foi possível injetar o script na página. Detalhe: " + err.message,
-    };
+    const pool = visible.length ? visible : all;
+    const scored = pool.map(v => {
+      const r = v.getBoundingClientRect();
+      let score = r.width * r.height;
+      if (v.duration > 30 && v.duration !== Infinity) score += 1e7;
+      if (!v.defaultMuted) score += 1e6;
+      if (!v.paused) score += 1e5;
+      return { v, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].v;
   }
 
-  if (!results || results.length === 0 || results[0].result === undefined) {
-    return { ok: false, status: "erro", reason: "Sem resposta do script injetado." };
+  let attemptCount = 0;
+  let lastSrcChangeTime = 0;
+  let lastUrlChangeTime = 0;
+  let lastEpisodeChangeTime = 0;
+  let retryTimer = null;
+  let cleanupFns = [];
+  const BACKOFF = [1000, 2000, 4000, 8000];
+
+  async function isArmed() {
+    const { autoPipArmed } = await chrome.storage.local.get('autoPipArmed');
+    return !!autoPipArmed;
   }
 
-  const result = results[0].result;
+  async function tryActivate(video, force = false) {
+    if (!(await isArmed())) return;
+    if (document.pictureInPictureElement) { attemptCount = 0; return; }
+    if (!video || video.duration <= 30 || video.duration === Infinity) return;
+    // Allow activation if page is hidden OR if forced (episode change re-arm)
+    if (!force && document.visibilityState !== 'hidden') return;
 
-  // ─── Integração com Auto PiP ────────────────────────────────────────────
-  const { autoPipEnabled } = await chrome.storage.local.get("autoPipEnabled");
+    video.removeAttribute('disablepictureinpicture');
+    try { video.disablePictureInPicture = false; } catch (_) {}
 
-  if (autoPipEnabled) {
-    if (result.ok && result.status === "ativado") {
-      // Usuário ativou PiP manualmente com Auto PiP ligado → armar
-      await armAutoPip(tab);
-    } else if (result.wasActive && result.status === "desativado") {
-      // Usuário desativou PiP manualmente → desarmar
-      await disarmAutoPip(tab);
+    try {
+      await video.requestPictureInPicture();
+      attemptCount = 0;
+      await chrome.storage.local.set({ pipActive: true, autoPipState: 'monitoring', lastError: null });
+    } catch (e) {
+      if (attemptCount >= BACKOFF.length) {
+        await chrome.storage.local.set({ lastError: 'AutoPip falhou: ' + e.message });
+        return;
+      }
+      const delay = BACKOFF[attemptCount++];
+      retryTimer = setTimeout(() => armVideo(video), delay);
     }
   }
 
-  return result;
+  function armVideo(video, force = false) {
+    if (!video) return;
+    const onMeta = () => tryActivate(video, force);
+    const onPlay = () => { if (!document.pictureInPictureElement) tryActivate(video, force); };
+    video.addEventListener('loadedmetadata', onMeta, { once: true });
+    video.addEventListener('canplay', onPlay, { once: true });
+    // Also try immediately if video already has metadata
+    if (video.readyState >= 1) tryActivate(video, force);
+    cleanupFns.push(() => {
+      video.removeEventListener('loadedmetadata', onMeta);
+      video.removeEventListener('canplay', onPlay);
+    });
+  }
+
+  function watchSrcChanges(video) {
+    // Watch src attribute (standard players)
+    const srcObs = new MutationObserver(() => { lastSrcChangeTime = Date.now(); armVideo(video); });
+    srcObs.observe(video, { attributes: true, attributeFilter: ['src', 'poster'] });
+    cleanupFns.push(() => srcObs.disconnect());
+
+    // Detect episode change via time reset (MSE players like Netflix)
+    // If currentTime drops near 0 while video had been playing past 10s → new episode
+    let prevTime = 0;
+    function onTimeUpdate() {
+      const ct = video.currentTime;
+      if (prevTime > 10 && ct < 3) {
+        lastEpisodeChangeTime = Date.now();
+        armVideo(video, true);
+      }
+      prevTime = ct;
+    }
+    video.addEventListener('timeupdate', onTimeUpdate);
+    cleanupFns.push(() => video.removeEventListener('timeupdate', onTimeUpdate));
+  }
+
+  function onUrlChange() {
+    lastUrlChangeTime = Date.now();
+    const t = setTimeout(() => { const v = findBestVideo(); if (v) armVideo(v); }, 800);
+    cleanupFns.push(() => clearTimeout(t));
+  }
+
+  // Hook history
+  const _push = history.pushState.bind(history);
+  const _replace = history.replaceState.bind(history);
+  let _lastUrl = location.href;
+  history.pushState = function (...a) { _push(...a); if (location.href !== _lastUrl) { _lastUrl = location.href; onUrlChange(); } };
+  history.replaceState = function (...a) { _replace(...a); if (location.href !== _lastUrl) { _lastUrl = location.href; onUrlChange(); } };
+  window.addEventListener('popstate', onUrlChange);
+  cleanupFns.push(() => {
+    history.pushState = _push;
+    history.replaceState = _replace;
+    window.removeEventListener('popstate', onUrlChange);
+  });
+
+  // DOM observer for new video nodes
+  const domObs = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeName === 'VIDEO') { watchSrcChanges(node); armVideo(node); }
+        else if (node.querySelectorAll) {
+          node.querySelectorAll('video').forEach(v => { watchSrcChanges(v); armVideo(v); });
+        }
+      }
+    }
+  });
+  domObs.observe(document.documentElement, { childList: true, subtree: true });
+  cleanupFns.push(() => domObs.disconnect());
+
+  // leavepictureinpicture
+  function onLeavePip() {
+    const now = Date.now();
+    const recentChange = (now - lastSrcChangeTime < 3000) || (now - lastUrlChangeTime < 3000) || (now - lastEpisodeChangeTime < 5000);
+    chrome.storage.local.get('autoPipArmed').then(({ autoPipArmed }) => {
+      if (!autoPipArmed) return;
+      if (recentChange) {
+        const v = findBestVideo();
+        if (v) armVideo(v, true);
+      } else {
+        chrome.storage.local.set({ autoPipState: 'suspended' });
+      }
+    });
+  }
+  document.addEventListener('leavepictureinpicture', onLeavePip);
+  cleanupFns.push(() => document.removeEventListener('leavepictureinpicture', onLeavePip));
+
+  // Message handler
+  function onMsg(msg, _s, sendResponse) {
+    if (msg.type === 'STOP_AUTO_PIP_WATCHER') { cleanup(); sendResponse({ ok: true }); }
+    else if (msg.type === 'REARM_AUTO_PIP') {
+      isArmed().then(a => { if (a) { const v = findBestVideo(); if (v) armVideo(v); } sendResponse({ ok: true }); });
+      return true;
+    }
+    return true;
+  }
+  chrome.runtime.onMessage.addListener(onMsg);
+  cleanupFns.push(() => chrome.runtime.onMessage.removeListener(onMsg));
+
+  function cleanup() {
+    clearTimeout(retryTimer);
+    cleanupFns.forEach(fn => { try { fn(); } catch (_) {} });
+    cleanupFns = [];
+    window.__quickyPipWatcher = false;
+  }
+
+  // Arm existing videos
+  document.querySelectorAll('video').forEach(v => watchSrcChanges(v));
+  const best = findBestVideo();
+  if (best) armVideo(best);
 }
 
-// ─── Comando de teclado Alt+P ──────────────────────────────────────────────
+// ─── Command: toggle-pip ──────────────────────────────────────────────────────
+
 chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== "toggle-pip") return;
-  await togglePiPOnActiveTab();
+  if (command !== 'toggle-pip') return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) return;
+  await executePipToggle(tab);
 });
 
-// ─── Mensagens do popup ────────────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === "TOGGLE_PIP") {
-    togglePiPOnActiveTab().then(sendResponse);
-    return true; // async
-  }
+// ─── Tab close cleanup ────────────────────────────────────────────────────────
 
-  if (msg.type === "DISABLE_AUTO_PIP") {
-    // Popup desligou o toggle → desarmar a aba ativa
-    getActiveTab().then((tab) => disarmAutoPip(tab).then(() => sendResponse({ ok: true })));
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const { pipTabId } = await chrome.storage.local.get('pipTabId');
+  if (pipTabId === tabId) {
+    await chrome.storage.local.set({ pipActive: false, pipTabId: null });
+  }
+});
+
+// ─── Storage change: arm/disarm Auto PiP on pipActive change ─────────────────
+
+chrome.storage.onChanged.addListener(async (changes) => {
+  if (changes.pipActive?.newValue === true) {
+    const { autoPipEnabled, pipTabId } = await chrome.storage.local.get(['autoPipEnabled', 'pipTabId']);
+    if (autoPipEnabled && pipTabId) {
+      await chrome.storage.local.set({ autoPipArmed: true, autoPipState: 'monitoring' });
+      await injectAutoPipWatcher(pipTabId);
+    }
+  }
+  if (changes.pipActive?.newValue === false) {
+    await chrome.storage.local.set({ autoPipArmed: false, autoPipState: 'disarmed' });
+  }
+});
+
+// ─── Message handler (popup) ──────────────────────────────────────────────────
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+
+  if (msg.type === 'TOGGLE_PIP') {
+    (async () => {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) {
+        sendResponse({ ok: false, error: 'Aba inválida.' }); return;
+      }
+      await executePipToggle(tab);
+      const state = await chrome.storage.local.get(['pipActive', 'pipTabId', 'lastError']);
+      sendResponse(state);
+    })();
     return true;
   }
 
-  if (msg.type === "GET_AUTO_PIP_STATUS") {
-    getActiveTab().then(async (tab) => {
-      let watcherStatus = null;
-      if (tab) {
-        await ensureContentScriptInjected(tab.id).catch(() => { });
-        watcherStatus = await sendToTab(tab.id, { type: "STATUS" });
+  if (msg.type === 'EXIT_PIP') {
+    (async () => {
+      const { pipTabId } = await chrome.storage.local.get('pipTabId');
+      if (!pipTabId) { sendResponse({ ok: false }); return; }
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: pipTabId },
+          func: () => document.pictureInPictureElement ? document.exitPictureInPicture() : Promise.resolve(),
+        });
+        await chrome.storage.local.set({ pipActive: false, pipTabId: null });
+        sendResponse({ ok: true });
+      } catch (e) {
+        await chrome.storage.local.set({ lastError: e.message });
+        sendResponse({ ok: false, error: e.message });
       }
-      const stored = await chrome.storage.local.get(["autoPipEnabled", "autoPipArmed"]);
-      sendResponse({ ...stored, watcherStatus });
-    });
+    })();
+    return true;
+  }
+
+  if (msg.type === 'GET_VIDEO_STATE') {
+    (async () => {
+      const { pipTabId } = await chrome.storage.local.get('pipTabId');
+      if (!pipTabId) { sendResponse(null); return; }
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: pipTabId }, files: ['content.js'] });
+        const state = await chrome.tabs.sendMessage(pipTabId, { type: 'GET_VIDEO_STATE' });
+        sendResponse(state || null);
+      } catch (e) {
+        sendResponse(null);
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'VIDEO_CMD') {
+    (async () => {
+      const { pipTabId } = await chrome.storage.local.get('pipTabId');
+      if (!pipTabId) { sendResponse({ ok: false }); return; }
+      try {
+        // Ensure content script is injected, then forward the command via tabs.sendMessage
+        // (avoids CSP issues with executeScript on sites like Netflix)
+        await chrome.scripting.executeScript({
+          target: { tabId: pipTabId },
+          files: ['content.js'],
+        });
+        const res = await chrome.tabs.sendMessage(pipTabId, msg.cmd);
+        sendResponse(res || { ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'SKIP_INTRO') {
+    (async () => {
+      const { pipTabId } = await chrome.storage.local.get('pipTabId');
+      if (!pipTabId) { sendResponse({ ok: false }); return; }
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: pipTabId },
+          files: ['content.js'],
+        });
+        const res = await chrome.tabs.sendMessage(pipTabId, { type: 'SKIP_INTRO' });
+        sendResponse(res || { ok: false });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'SET_AUTO_PIP') {
+    (async () => {
+      const { enabled } = msg;
+      await chrome.storage.local.set({ autoPipEnabled: enabled });
+      if (!enabled) {
+        await chrome.storage.local.set({ autoPipArmed: false, autoPipState: 'disarmed' });
+        const { pipTabId } = await chrome.storage.local.get('pipTabId');
+        if (pipTabId) {
+          try { await chrome.tabs.sendMessage(pipTabId, { type: 'STOP_AUTO_PIP_WATCHER' }); } catch (_) {}
+        }
+      } else {
+        const { pipActive, pipTabId } = await chrome.storage.local.get(['pipActive', 'pipTabId']);
+        if (pipActive && pipTabId) {
+          await chrome.storage.local.set({ autoPipArmed: true, autoPipState: 'monitoring' });
+          await injectAutoPipWatcher(pipTabId);
+        } else {
+          await chrome.storage.local.set({ autoPipArmed: false, autoPipState: 'disarmed' });
+        }
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (msg.type === 'GO_TO_PIP_TAB') {
+    (async () => {
+      const { pipTabId } = await chrome.storage.local.get('pipTabId');
+      if (pipTabId) await chrome.tabs.update(pipTabId, { active: true });
+      sendResponse({ ok: !!pipTabId });
+    })();
     return true;
   }
 });
