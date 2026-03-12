@@ -379,6 +379,20 @@ body {
 
 .btn-deactivate:hover:not(:disabled) { background: var(--surface2); border-color: var(--text-muted); }
 
+.btn-unlock-pip {
+  grid-column: 1 / -1;
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border);
+  font-size: 11px;
+}
+
+.btn-unlock-pip:hover:not(:disabled) {
+  background: var(--surface2);
+  border-color: var(--border2);
+  color: var(--text-mid);
+}
+
 @keyframes pulse-btn {
   0%, 100% { box-shadow: 0 0 0 0 rgba(201,109,58,.3); }
   50% { box-shadow: 0 0 0 5px rgba(201,109,58,0); }

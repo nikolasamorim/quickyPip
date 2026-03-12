@@ -52,6 +52,7 @@
         tabOrigin: location.hostname,
         tabTitle: document.title,
         hasSkipBtn,
+        pipElementActive: !!document.pictureInPictureElement,
       });
       return true;
     }

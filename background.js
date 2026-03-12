@@ -70,6 +70,60 @@ async function executePipToggle(tab) {
   }
 }
 
+// ─── executePipActivate (activate-only, never exits PiP) ─────────────────────
+
+async function executePipActivate(tab) {
+  if (!tab?.id) return;
+  const tabId = tab.id;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: function () {
+        if (document.pictureInPictureElement) {
+          return Promise.resolve({ ok: false, action: 'already_active' });
+        }
+        function findBestVideo() {
+          const all = Array.from(document.querySelectorAll('video'));
+          if (!all.length) return null;
+          const visible = all.filter(v => {
+            const s = window.getComputedStyle(v);
+            if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+            const r = v.getBoundingClientRect();
+            return r.width > 100 && r.height > 100;
+          });
+          const pool = visible.length ? visible : all;
+          const scored = pool.map(v => {
+            const r = v.getBoundingClientRect();
+            let score = r.width * r.height;
+            if (v.duration > 30 && v.duration !== Infinity) score += 1e7;
+            if (!v.defaultMuted) score += 1e6;
+            if (!v.paused) score += 1e5;
+            return { v, score };
+          });
+          scored.sort((a, b) => b.score - a.score);
+          return scored[0].v;
+        }
+        const video = findBestVideo();
+        if (!video) return Promise.resolve({ ok: false, action: 'none', error: 'Nenhum vídeo encontrado.' });
+        video.removeAttribute('disablepictureinpicture');
+        try { video.disablePictureInPicture = false; } catch (_) {}
+        return video.requestPictureInPicture()
+          .then(() => ({ ok: true, action: 'activated' }))
+          .catch(e => ({ ok: false, action: 'activated', error: e.message }));
+      },
+    });
+    const res = results?.[0]?.result;
+    if (!res) { await chrome.storage.local.set({ lastError: 'Sem resposta do script.' }); return; }
+    if (res.action === 'activated' && res.ok) {
+      await chrome.storage.local.set({ pipActive: true, pipTabId: tabId, lastError: null });
+    } else if (!res.ok && res.action !== 'already_active') {
+      await chrome.storage.local.set({ lastError: res.error || 'Erro desconhecido.' });
+    }
+  } catch (e) {
+    await chrome.storage.local.set({ lastError: e.message });
+  }
+}
+
 // ─── Auto PiP watcher injection ──────────────────────────────────────────────
 
 async function injectAutoPipWatcher(tabId) {
@@ -299,6 +353,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await executePipToggle(tab);
       const state = await chrome.storage.local.get(['pipActive', 'pipTabId', 'lastError']);
       sendResponse(state);
+    })();
+    return true;
+  }
+
+  if (msg.type === 'ACTIVATE_PIP') {
+    (async () => {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) {
+        sendResponse({ ok: false, error: 'Aba inválida.' }); return;
+      }
+      await executePipActivate(tab);
+      const state = await chrome.storage.local.get(['pipActive', 'pipTabId', 'lastError']);
+      sendResponse(state);
+    })();
+    return true;
+  }
+
+  if (msg.type === 'REMOVE_DISABLE_PIP_ATTR') {
+    (async () => {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) {
+        sendResponse({ ok: false, error: 'Aba inválida.' }); return;
+      }
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: function () {
+            const videos = Array.from(document.querySelectorAll('video'));
+            let count = 0;
+            videos.forEach(v => {
+              if (v.hasAttribute('disablepictureinpicture')) {
+                v.removeAttribute('disablepictureinpicture');
+                count++;
+              }
+              try { v.disablePictureInPicture = false; } catch (_) {}
+            });
+            return { ok: true, count };
+          },
+        });
+        const res = results?.[0]?.result;
+        sendResponse(res || { ok: false });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
     })();
     return true;
   }

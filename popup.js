@@ -30,6 +30,7 @@ const speedUp       = document.getElementById('speed-up');
 const btnSkipIntro  = document.getElementById('btn-skip-intro');
 const btnActivate   = document.getElementById('btn-activate');
 const btnDeactivate = document.getElementById('btn-deactivate');
+const btnUnlockPip  = document.getElementById('btn-unlock-pip');
 const autopipCard   = document.getElementById('autopip-card');
 const autopipToggle = document.getElementById('autopip-toggle');
 const autopipStateLine = document.getElementById('autopip-state-line');
@@ -170,11 +171,20 @@ function renderAutoPipUI() {
 async function poll() {
   if (!pipActive) return;
   const state = await sendBg({ type: 'GET_VIDEO_STATE' });
-  if (state) renderVideoState(state);
+  if (state) {
+    renderVideoState(state);
+    // Real-time check: if the actual PiP element is gone, reconcile immediately
+    if (state.pipElementActive === false && pipActive) {
+      await chrome.storage.local.set({ pipActive: false, pipTabId: null });
+      renderPipState(false);
+      stopPolling();
+      return;
+    }
+  }
 
   // Also sync storage for autoPipState
   const stored = await chrome.storage.local.get(['pipActive', 'autoPipState', 'autoPipEnabled', 'pipTabId']);
-  if (!stored.pipActive && pipActive) { renderPipState(false); }
+  if (!stored.pipActive && pipActive) { renderPipState(false); stopPolling(); return; }
   if (stored.autoPipState && stored.autoPipState !== autoPipState) {
     autoPipState = stored.autoPipState;
     renderAutoPipUI();
@@ -194,7 +204,7 @@ function stopPolling() {
 
 btnActivate.addEventListener('click', async () => {
   btnActivate.disabled = true;
-  await sendBg({ type: 'TOGGLE_PIP' });
+  await sendBg({ type: 'ACTIVATE_PIP' });
   const stored = await chrome.storage.local.get(['pipActive', 'pipTabId', 'autoPipState', 'autoPipEnabled']);
   pipTabId      = stored.pipTabId;
   autoPipState  = stored.autoPipState || 'disarmed';
@@ -208,6 +218,12 @@ btnDeactivate.addEventListener('click', async () => {
   await sendBg({ type: 'EXIT_PIP' });
   renderPipState(false);
   stopPolling();
+});
+
+btnUnlockPip.addEventListener('click', async () => {
+  btnUnlockPip.disabled = true;
+  await sendBg({ type: 'REMOVE_DISABLE_PIP_ATTR' });
+  setTimeout(() => { btnUnlockPip.disabled = false; }, 1200);
 });
 
 miniPlayBtn.addEventListener('click', () => videoCmd('TOGGLE_PLAY'));
